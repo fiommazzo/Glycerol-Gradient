@@ -1,0 +1,103 @@
+---
+title: "Glycerol_gradient_evaluation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(artMS)
+library(gridExtra)
+```
+
+Spectral count analysis like in Mashtalir et al. Cell, 2018 
+
+```{r}
+evd <- read.delim(file = "evidence.txt")
+keys <- read.delim(file = "keys.txt")
+gene_names <- evd |>
+  dplyr::select(Proteins, Gene.names) |>
+  mutate(Proteins = vapply(strsplit(Proteins,";"), `[`, 1, FUN.VALUE=character(1)),
+         Gene.names = vapply(strsplit(Gene.names,";"), `[`, 1, FUN.VALUE=character(1))) |>
+  unique()
+```
+
+```{r}
+summary_spectral_count <- artmsSpectralCounts(
+  evidence_file = evd,
+  keys_file = keys
+)
+```
+
+```{r}
+spectral_count_prot <- summary_spectral_count |>
+  dplyr::select(Proteins, Condition, spectral_counts) |>
+  pivot_wider(names_from = Condition, values_from = spectral_counts) |>
+  mutate(Proteins = vapply(strsplit(Proteins,";"), `[`, 1, FUN.VALUE=character(1))) |>
+  mutate(across(everything(), ~replace(.x, which(is.na(.x)), 0))) |>
+  group_by(Proteins) |>
+  summarize(across(everything(), sum)) |>
+  inner_join(gene_names, by = "Proteins") |>
+  mutate(ID = paste0(Gene.names, "_", Proteins)) |>
+  dplyr::select(-Proteins, -Gene.names) |>
+  column_to_rownames("ID")
+```
+
+```{r}
+spectral_count_prot$max <- apply(spectral_count_prot, 1, max)
+fractinal_spectral_count <- spectral_count_prot[,1:(ncol(spectral_count_prot)-1)] / spectral_count_prot$max
+```
+
+```{r}
+complex <- c("PCGF3", "RNF2", "RING1", "RYBP", "YAF2", "AUTS2", "FBRS", "FBRSL1", "CSKN2A1", "CSNK2B", "CSNK2A2", "DCAF7", "USP7")
+
+complex_spectral_count <- function(input, complex){
+  output <- input |>
+    rownames_to_column("ID") |>
+    mutate(Gene = vapply(strsplit(ID,"_"), `[`, 1, FUN.VALUE=character(1))) |>
+    filter(Gene %in% complex) |>
+    dplyr::select(-Gene)
+  return(output)
+}
+
+complex_sc <- complex_spectral_count(fractinal_spectral_count, complex)
+```
+
+```{r}
+generate_plot <- function(df, p, i) {
+  df[i,] |>
+    #rownames_to_column("ID") |>
+    pivot_longer(!ID) |>
+    #mutate(name = gsub("Fraction ", "", name)) |>
+    ggplot(aes(x = name, 
+               y = as.numeric(value), group = 1)) +
+    geom_area(aes(fill = as.numeric(value)), fill = "grey") +
+    geom_line(col = "black")+
+    theme_bw()+
+    theme(legend.position = "None",
+          axis.title.x = element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.title.y = element_blank()) +
+    ggtitle(df[i,]$ID)
+} #profile plot
+
+
+p <- list()
+```
+
+```{r}
+for(i in 1:dim(complex_sc)[1]) {
+  p[[i]] <- generate_plot(complex_sc, p, i)
+}
+```
+
+```{r}
+do.call("grid.arrange", c(p, ncol = 4))
+```
+
+
+
